@@ -1,0 +1,58 @@
+/* Success Animation Logic */
+.circle-success {
+  fill: #2ecc71;
+  transform-origin: center;
+  animation: pop 0.4s ease-out forwards;
+}
+
+.check-mark {
+  fill: none;
+  stroke: white;
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 50;
+  stroke-dashoffset: 50;
+  animation: draw 0.3s ease-out 0.4s forwards;
+}
+
+/* Error Animation Logic */
+.circle-error {
+  fill: #e74c3c;
+  transform-origin: center;
+  animation: shake 0.5s ease-in-out, pop-in 0.3s ease-out forwards;
+}
+
+.x-mark {
+  stroke: white;
+  stroke-width: 6;
+  stroke-linecap: round;
+  opacity: 0;
+  animation: fade-in 0.2s ease-out 0.3s forwards;
+}
+
+/* Keyframes */
+@keyframes pop {
+  0% { transform: scale(0); opacity: 0; }
+  80% { transform: scale(1.1); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes pop-in {
+  0% { transform: scale(0); }
+  100% { transform: scale(1); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+@keyframes fade-in {
+  to { opacity: 1; }
+}
