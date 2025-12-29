@@ -3,8 +3,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { 
   Filter, Download, X, QrCode, Smartphone, ChevronDown, ArrowLeft, 
-  Delete,
-  Trash
+  Delete, Trash
 } from 'lucide-react';
 
 const QRModal = ({ booking, onClose }) => {
@@ -89,14 +88,17 @@ Need help? Contact us or Visit: http://www.goldeneventz.co.in`;
   );
 };
 
-const BookingCard = ({ booking, onQRClick, events, deleteBooking }) => {
+const BookingCard = ({ booking, onQRClick, events, deleteBooking, serialNumber }) => {
   const event = events.find(e => e._id === booking.event);
   
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-all mb-3">
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1 min-w-0">
-          <div className="font-bold text-sm text-gray-900 truncate">#{booking.bookingId}</div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold text-gray-500">{serialNumber}.</span>
+            <div className="font-bold text-sm text-gray-900 truncate">#{booking.bookingId}</div>
+          </div>
           <div className="text-xs text-gray-500 font-mono mb-1">{booking.memberName}</div>
           <div className="text-xs text-indigo-600 font-medium">{event?.title || 'N/A'}</div>
         </div>
@@ -135,13 +137,12 @@ const BookingCard = ({ booking, onQRClick, events, deleteBooking }) => {
           <QrCode className="w-3 h-3" />
           Send QR
         </button>
-
         <button
-      onClick={() => deleteBooking(booking._id)}
-      className="bg-red-800 text-white px-4 py-1.5 rounded-lg font-medium text-xs hover:bg-gray-800 transition flex items-center gap-1 whitespace-nowrap"
-    >
-      Delete
-    </button>
+          onClick={() => deleteBooking(booking._id)}
+          className="bg-red-600 text-white px-3 py-1.5 rounded-lg font-medium text-xs hover:bg-red-700 transition flex items-center gap-1 whitespace-nowrap"
+        >
+          <Trash className="w-3 h-3" />
+        </button>
       </div>
     </div>
   );
@@ -154,6 +155,12 @@ const OfflineListPage = () => {
     startDate: '', endDate: '', eventId: '', memberId: '', utrNumber: '',
     paymentStatus: '', discountCode: '', search: ''
   });
+  const [pagination, setPagination] = useState({
+    currentPage: 1,
+    totalPages: 1,
+    totalBookings: 0
+  });
+  const [loading, setLoading] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [showFilterPopup, setShowFilterPopup] = useState(false);
@@ -177,66 +184,144 @@ const OfflineListPage = () => {
     }
   }, [token]);
 
+  const getBaseIndex = () => {
+    const page = pagination.currentPage || 1;
+    const limit = 20; // Adjust based on your backend page size
+    return (page - 1) * limit;
+  };
+
   const fetchEvents = async () => {
     try {
-      const res = await axios.get('https://srs-backend-7ch1.onrender.com/api/events', { headers: { Authorization: `Bearer ${token}` } });
+      const res = await axios.get('https://srs-backend-7ch1.onrender.com/api/events', { 
+        headers: { Authorization: `Bearer ${token}` } 
+      });
       setEvents(res.data.data || []);
     } catch {
       toast.error('Failed to load events');
     }
   };
 
-  const fetchBookings = async () => {
+  const fetchBookings = async (page = 1) => {
     if (!token) return;
     try {
+      setLoading(true);
       const res = await axios.get('https://srs-backend-7ch1.onrender.com/api/admin/offline-bookings', {
-        params: filter,
+        params: {
+          ...filter,
+          page,
+        },
         headers: { Authorization: `Bearer ${token}` }
       });
       setBookings(res.data.data || []);
+
+      if (res.data.pagination) {
+        setPagination({
+          currentPage: res.data.pagination.currentPage || 1,
+          totalPages: res.data.pagination.totalPages || 1,
+          totalBookings: res.data.pagination.totalBookings || 0,
+        });
+      }
     } catch (err) {
       if (err.response?.status === 401) {
         localStorage.removeItem('token');
         window.location.href = '/login';
       }
       toast.error('Failed to load bookings');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleExport = async () => {
-    try {
-      const res = await axios.get('https://srs-backend-7ch1.onrender.com/api/admin/offline-bookings/export', {
-        responseType: 'blob',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const url = URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `offline-bookings-${new Date().toISOString().slice(0, 10)}.csv`;
-      link.click();
-      toast.success('CSV exported!');
-    } catch {
-      toast.error('Export failed');
+  // ✅ FRONTEND-ONLY CSV EXPORT (No backend API call)
+  const handleExport = () => {
+    if (bookings.length === 0) {
+      toast.error('No data to export');
+      return;
     }
+
+    // Create CSV headers
+    const headers = [
+      'SI.No', 'Booking ID', 'Member Name', 'Member ID', 'Event', 
+      'Tickets (M/G/K)', 'Meals (V/NV)', 'Gross Amount', 'Final Amount', 
+      'Payment Status', 'UTR Number', 'Contact Number', 'Booking Date'
+    ];
+
+    // Transform bookings data to CSV rows
+    const rows = bookings.map((booking, index) => {
+      const event = events.find(e => e._id === booking.event);
+      const vegTotal = booking.memberVegCount + booking.guestVegCount + booking.kidVegCount;
+      const nonVegTotal = booking.memberNonVegCount + booking.guestNonVegCount + booking.kidNonVegCount;
+      
+      return [
+        getBaseIndex() + index + 1,
+        booking.bookingId,
+        `"${booking.memberName}"`,
+        booking.memberIdInput || '',
+        event?.title || 'N/A',
+        `M:${booking.memberTicketCount} G:${booking.guestTicketCount} K:${booking.kidTicketCount}`,
+        `V:${vegTotal} NV:${nonVegTotal}`,
+        booking.grossAmount,
+        booking.finalAmount,
+        booking.paymentStatus?.toUpperCase() || '',
+        booking.utrNumber || '',
+        booking.contactNumber || '',
+        new Date(booking.createdAt || booking.bookingDate).toLocaleDateString('en-IN')
+      ];
+    });
+
+    // Add summary row
+    rows.push([
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      `TOTAL: ${pagination.totalBookings} bookings`,
+      '',
+      '',
+      '',
+      `Page ${pagination.currentPage} of ${pagination.totalPages}`
+    ]);
+
+    // Create CSV content
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    // Download CSV
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `offline-bookings-${new Date().toISOString().slice(0, 10)}-page-${pagination.currentPage}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    toast.success(`Exported ${bookings.length} bookings from page ${pagination.currentPage}`);
   };
 
   const deleteBooking = async (id) => {
-  if (!window.confirm("Are you sure you want to delete this booking?")) return;
+    if (!window.confirm("Are you sure you want to delete this booking?")) return;
 
-  try {
-    const res = await axios.delete(
-      `https://srs-backend-7ch1.onrender.com/api/admin/offline-bookings/${id}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
+    try {
+      const res = await axios.delete(
+        `https://srs-backend-7ch1.onrender.com/api/admin/offline-bookings/${id}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
 
-    toast.success("Booking deleted successfully");
+      toast.success("Booking deleted successfully");
+      fetchBookings(pagination.currentPage);
+    } catch (err) {
+      toast.error("Failed to delete booking");
+    }
+  };
 
-    fetchBookings();
-
-  } catch (err) {
-    toast.error("Failed to delete booking");
-  }
-};
   const openQRModal = (booking) => {
     setSelectedBooking(booking);
     setShowQRModal(true);
@@ -246,13 +331,9 @@ const OfflineListPage = () => {
     window.history.back();
   };
 
-  
-
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-indigo-50 p-2 sm:p-4">
       <div className="max-w-7xl mx-auto">
-        {}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 p-3 bg-white/80 backdrop-blur-sm rounded-xl shadow-sm border">
           <button 
             onClick={goBack}
@@ -272,15 +353,15 @@ const OfflineListPage = () => {
             </button>
             <button 
               onClick={handleExport} 
-              className="flex items-center gap-1.5 bg-black text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-800 transition whitespace-nowrap"
+              className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-green-700 transition whitespace-nowrap disabled:opacity-50"
+              disabled={loading || bookings.length === 0}
             >
               <Download className="w-3 h-3" />
-              Export
+              Export CSV
             </button>
           </div>
         </div>
 
-        {}
         {showFilterPopup && (
           <div className="fixed inset-0 bg-black/50 z-[999] flex items-end sm:items-center justify-center p-2 sm:p-6">
             <div className="bg-white rounded-2xl sm:rounded-xl w-full max-w-md max-h-[85vh] overflow-auto shadow-2xl border">
@@ -332,7 +413,11 @@ const OfflineListPage = () => {
                   </select>
                 </div>
                 <button 
-                  onClick={() => { fetchBookings(); setShowFilterPopup(false); }} 
+                  onClick={() => { 
+                    setPagination(prev => ({ ...prev, currentPage: 1 })); 
+                    fetchBookings(1); 
+                    setShowFilterPopup(false); 
+                  }} 
                   className="w-full bg-black text-white py-3 rounded-xl font-semibold text-sm hover:bg-gray-800 transition mt-2"
                 >
                   Apply Filters
@@ -342,12 +427,12 @@ const OfflineListPage = () => {
           </div>
         )}
 
-        {}
         <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-lg border p-2 sm:p-4">
           {isMobile || window.innerWidth < 768 ? (
-            
             <div className="space-y-3">
-              {bookings.length === 0 ? (
+              {loading ? (
+                <div className="text-center py-12 text-gray-500">Loading...</div>
+              ) : bookings.length === 0 ? (
                 <div className="text-center py-12 text-gray-500">
                   <div className="w-16 h-16 bg-gray-200 rounded-2xl mx-auto mb-4 flex items-center justify-center">
                     <Filter className="w-8 h-8 text-gray-400" />
@@ -355,23 +440,24 @@ const OfflineListPage = () => {
                   <p className="text-lg font-semibold">No bookings found</p>
                 </div>
               ) : (
-                bookings.map(booking => (
+                bookings.map((booking, index) => (
                   <BookingCard
                     key={booking._id}
                     booking={booking}
                     onQRClick={openQRModal}
                     events={events}
                     deleteBooking={deleteBooking}
+                    serialNumber={getBaseIndex() + index + 1}
                   />
                 ))
               )}
             </div>
           ) : (
-            
             <div className="overflow-x-auto">
               <table className="w-full table-fixed border-collapse border border-gray-200 text-xs">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-300">
+                    <th className="border border-gray-300 p-2.5 text-center font-semibold text-gray-700 w-16">SI.No</th>
                     <th className="border border-gray-300 p-2.5 text-left font-semibold text-gray-700">Booking ID</th>
                     <th className="border border-gray-300 p-2.5 text-left font-semibold text-gray-700">Member</th>
                     <th className="border border-gray-300 p-2.5 text-center font-semibold text-gray-700">Tickets</th>
@@ -379,27 +465,38 @@ const OfflineListPage = () => {
                     <th className="border border-gray-300 p-2.5 text-right font-semibold text-gray-700">Gross</th>
                     <th className="border border-gray-300 p-2.5 text-right font-semibold text-gray-700">Final</th>
                     <th className="border border-gray-300 p-2.5 text-center font-semibold text-gray-700">Status</th>
-                    {}
                     <th className="border border-gray-300 p-2.5 text-center font-semibold text-gray-700">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {bookings.length === 0 ? (
+                  {loading ? (
+                    <tr>
+                      <td colSpan="9" className="text-center p-8 text-gray-500">Loading...</td>
+                    </tr>
+                  ) : bookings.length === 0 ? (
                     <tr>
                       <td colSpan="9" className="text-center p-8 text-gray-500">No bookings found</td>
                     </tr>
                   ) : (
-                    bookings.map(b => (
+                    bookings.map((b, index) => (
                       <tr key={b._id} className="border-b border-gray-100 hover:bg-gray-50 transition">
-                       <td className="border border-gray-300 p-2 font-mono text-xs break-words">
-  {`#${b.bookingId}`}
-</td>
+                        <td className="border border-gray-300 p-2 text-center font-mono text-xs">
+                          {getBaseIndex() + index + 1}
+                        </td>
+                        <td className="border border-gray-300 p-2 font-mono text-xs break-words">
+                          {`#${b.bookingId}`}
+                        </td>
                         <td className="border border-gray-300 p-2 max-w-[160px]">
                           <div className="font-semibold text-xs truncate">{b.memberName}</div>
                           <div className="text-xs text-gray-500 font-mono truncate">{b.memberIdInput}</div>
                         </td>
-                        <td className="border border-gray-300 p-2 text-center font-mono text-xs">M:{b.memberTicketCount}<br/>G:{b.guestTicketCount} K:{b.kidTicketCount}</td>
-                        <td className="border border-gray-300 p-2 text-center font-mono text-xs">V:{b.memberVegCount + b.guestVegCount + b.kidVegCount}<br/>NV:{b.memberNonVegCount + b.guestNonVegCount + b.kidNonVegCount}</td>
+                        <td className="border border-gray-300 p-2 text-center font-mono text-xs">
+                          M:{b.memberTicketCount}<br/>G:{b.guestTicketCount} K:{b.kidTicketCount}
+                        </td>
+                        <td className="border border-gray-300 p-2 text-center font-mono text-xs">
+                          V:{b.memberVegCount + b.guestVegCount + b.kidVegCount}<br/>
+                          NV:{b.memberNonVegCount + b.guestNonVegCount + b.kidNonVegCount}
+                        </td>
                         <td className="border border-gray-300 p-2 text-right font-mono text-xs">₹{b.grossAmount}</td>
                         <td className="border border-gray-300 p-2 text-right font-bold text-green-600 font-mono text-xs">₹{b.finalAmount}</td>
                         <td className="border border-gray-300 p-2 text-center">
@@ -407,22 +504,19 @@ const OfflineListPage = () => {
                             {b.paymentStatus.toUpperCase()}
                           </span>
                         </td>
-                        {}
-                        <td className="border border-gray-300 p-2 text-center flex space2">
+                        <td className="border border-gray-300 p-2 text-center flex gap-1">
                           <button
                             onClick={() => openQRModal(b)}
                             className="bg-black text-white px-3 py-1.5 rounded-lg font-medium text-xs hover:bg-gray-800 transition flex items-center gap-1 mx-auto"
                           >
                             <QrCode className="w-3 h-3" />
-                            
                           </button>
-
                           <button
-      onClick={() => deleteBooking(b._id)}
-      className="bg-red-600 text-white px-3 py-1.5 rounded-lg font-medium text-xs hover:bg-red-700 transition whitespace-nowrap mx-2"
-    >
-      <Trash className="w-3 h-3"/>
-    </button>
+                            onClick={() => deleteBooking(b._id)}
+                            className="bg-red-600 text-white px-3 py-1.5 rounded-lg font-medium text-xs hover:bg-red-700 transition whitespace-nowrap mx-2"
+                          >
+                            <Trash className="w-3 h-3"/>
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -431,6 +525,46 @@ const OfflineListPage = () => {
               </table>
             </div>
           )}
+          
+          {}
+          <div className="mt-6 pt-4 border-t border-gray-200">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+              <div className="text-gray-600">
+                Showing <span className="font-semibold">{bookings.length}</span> of{' '}
+                <span className="font-semibold">{pagination.totalBookings.toLocaleString()}</span> total bookings
+                {filter.startDate || filter.endDate || filter.eventId || filter.paymentStatus ? 
+                  ' (filtered)' : ''
+                }
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={pagination.currentPage <= 1 || loading}
+                  onClick={() => fetchBookings(pagination.currentPage - 1)}
+                  className={`px-4 py-2 rounded-lg border font-semibold transition-all ${
+                    pagination.currentPage <= 1 || loading
+                      ? 'text-gray-400 border-gray-200 cursor-not-allowed'
+                      : 'text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+                  }`}
+                >
+                  Previous
+                </button>
+                <span className="px-3 py-2 bg-gray-100 rounded-lg font-mono text-sm min-w-[80px] text-center">
+                  {pagination.currentPage} / {pagination.totalPages}
+                </span>
+                <button
+                  disabled={pagination.currentPage >= pagination.totalPages || loading}
+                  onClick={() => fetchBookings(pagination.currentPage + 1)}
+                  className={`px-4 py-2 rounded-lg border font-semibold transition-all ${
+                    pagination.currentPage >= pagination.totalPages || loading
+                      ? 'text-gray-400 border-gray-200 cursor-not-allowed'
+                      : 'text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+                  }`}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         {showQRModal && <QRModal booking={selectedBooking} onClose={() => setShowQRModal(false)} />}
