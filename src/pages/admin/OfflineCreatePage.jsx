@@ -231,7 +231,7 @@ const OfflineCreatePage = () => {
 
     const gross = memberTicketCount * memberPrice + guestTicketCount * guestPrice + kidTicketCount * kidPrice;
 
-    const validCodes = { Discount52026: 5, Discount102026: 10, Discount152026: 15 };
+    const validCodes = { Discount52026: 5, Discount102026: 10, Discount152026: 15, Discount1002026: 100 };
     const code = (watchDiscountCode || "").trim();
     const discountPercent = validCodes[code] || 0;
     const discount = Math.round((gross * discountPercent) / 100);
