@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import api from '../../services/api';
 import {
   CheckCircleIcon, XCircleIcon, CalendarDaysIcon, ClockIcon, UserIcon, XMarkIcon, CameraIcon, ArrowsRightLeftIcon,
@@ -98,10 +98,12 @@ const QrScanPage = () => {
     try {
       await scanner.start(
         idToUse,
-        { 
-          fps: 8, 
-          qrbox: { width: 260, height: 260 }, 
-          aspectRatio: 1 
+        {
+          fps: 14,
+          qrbox: { width: 320, height: 320 },
+          aspectRatio: 1,
+          useBarCodeDetectorIfSupported: true,
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
         },
         (decodedText) => {
           if (isScanning.current || modalState.show) return; 
@@ -245,8 +247,11 @@ const QrScanPage = () => {
         const cams = await Html5Qrcode.getCameras();
         setAvailableCameras(cams);
         if (cams.length === 0) throw new Error('No camera');
-        const frontCam = cams.find(c => c.label.toLowerCase().includes('front')) || cams[0];
-        setCurrentCameraId(frontCam.id);
+        const backCam = cams.find(c => {
+          const label = c.label.toLowerCase();
+          return label.includes('back') || label.includes('rear') || label.includes('environment');
+        }) || cams[0];
+        setCurrentCameraId(backCam.id);
       } catch (err) {
         console.error('Initial Camera error:', err);
       }
