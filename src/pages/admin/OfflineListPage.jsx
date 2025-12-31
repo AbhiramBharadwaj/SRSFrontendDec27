@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { 
-  Filter, Download, X, QrCode, Smartphone, ChevronDown, ArrowLeft, 
+  Filter, Download, X, QrCode, Smartphone, ChevronDown, ArrowLeft, Search,
   Delete, Trash
 } from 'lucide-react';
 
@@ -152,7 +152,7 @@ const OfflineListPage = () => {
   const [bookings, setBookings] = useState([]);
   const [events, setEvents] = useState([]);
   const [filter, setFilter] = useState({
-    startDate: '', endDate: '', eventId: '', memberId: '', utrNumber: '',
+    startDate: '', endDate: '', eventId: '', memberIdInput: '', memberId: '', utrNumber: '',
     paymentStatus: '', discountCode: '', search: ''
   });
   const [pagination, setPagination] = useState({
@@ -165,6 +165,7 @@ const OfflineListPage = () => {
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [showFilterPopup, setShowFilterPopup] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
 
   const token = localStorage.getItem('token');
 
@@ -174,6 +175,10 @@ const OfflineListPage = () => {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+
+  useEffect(() => {
+    setMemberSearch(filter.memberIdInput || filter.memberId || '');
+  }, [filter.memberIdInput, filter.memberId]);
 
   useEffect(() => {
     if (token) {
@@ -201,18 +206,19 @@ const OfflineListPage = () => {
     }
   };
 
-  const fetchBookings = async (page = 1) => {
+  const fetchBookings = async (page = 1, filterOverride = filter) => {
     if (!token) return;
     try {
       setLoading(true);
       const res = await axios.get('https://srs-backend-7ch1.onrender.com/api/admin/offline-bookings', {
         params: {
-          ...filter,
+          ...filterOverride,
           page,
         },
         headers: { Authorization: `Bearer ${token}` }
       });
-      setBookings(res.data.data || []);
+      const data = res.data.data || [];
+      setBookings(data);
 
       if (res.data.pagination) {
         setPagination({
@@ -232,9 +238,89 @@ const OfflineListPage = () => {
     }
   };
 
+  const fetchAllBookingsForSearch = async () => {
+    if (!token) return;
+    try {
+      setLoading(true);
+      const baseParams = { ...filter, page: 1 };
+      const first = await axios.get('https://srs-backend-7ch1.onrender.com/api/admin/offline-bookings', {
+        params: baseParams,
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const firstData = first.data.data || [];
+      const totalPages = first.data.pagination?.totalPages || 1;
+      if (totalPages <= 1) {
+        setBookings(firstData);
+        setPagination({
+          currentPage: 1,
+          totalPages: 1,
+          totalBookings: firstData.length,
+        });
+        return;
+      }
+
+      const pageRequests = Array.from({ length: totalPages - 1 }, (_, idx) => {
+        const page = idx + 2;
+        return axios.get('https://srs-backend-7ch1.onrender.com/api/admin/offline-bookings', {
+          params: { ...baseParams, page },
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      });
+
+      const rest = await Promise.all(pageRequests);
+      const allData = [
+        ...firstData,
+        ...rest.flatMap(res => res.data.data || [])
+      ];
+
+      setBookings(allData);
+      setPagination({
+        currentPage: 1,
+        totalPages: 1,
+        totalBookings: allData.length,
+      });
+    } catch (err) {
+      toast.error('Failed to load bookings');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const applyMemberSearch = () => {
+    const trimmed = memberSearch.trim();
+    setMemberSearch(trimmed);
+    if (trimmed) {
+      fetchAllBookingsForSearch();
+    } else {
+      setPagination(prev => ({ ...prev, currentPage: 1 }));
+      fetchBookings(1);
+    }
+  };
+
+  const clearMemberSearch = () => {
+    setMemberSearch('');
+    setPagination(prev => ({ ...prev, currentPage: 1 }));
+    fetchBookings(1);
+  };
+
+  const normalizeText = (value) =>
+    String(value || '')
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[^a-z0-9]/g, '');
+
+  const normalizedMemberSearch = normalizeText(memberSearch);
+  const filteredBookings = normalizedMemberSearch
+    ? bookings.filter(b => {
+        const memberName = normalizeText(b.memberName);
+        const contactNumber = normalizeText(b.contactNumber);
+        return memberName.includes(normalizedMemberSearch) || contactNumber.includes(normalizedMemberSearch);
+      })
+    : bookings;
+
   // ✅ FRONTEND-ONLY CSV EXPORT (No backend API call)
   const handleExport = () => {
-    if (bookings.length === 0) {
+    if (filteredBookings.length === 0) {
       toast.error('No data to export');
       return;
     }
@@ -247,7 +333,7 @@ const OfflineListPage = () => {
     ];
 
     // Transform bookings data to CSV rows
-    const rows = bookings.map((booking, index) => {
+    const rows = filteredBookings.map((booking, index) => {
       const event = events.find(e => e._id === booking.event);
       const vegTotal = booking.memberVegCount + booking.guestVegCount + booking.kidVegCount;
       const nonVegTotal = booking.memberNonVegCount + booking.guestNonVegCount + booking.kidNonVegCount;
@@ -303,7 +389,7 @@ const OfflineListPage = () => {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     
-    toast.success(`Exported ${bookings.length} bookings from page ${pagination.currentPage}`);
+    toast.success(`Exported ${filteredBookings.length} bookings from page ${pagination.currentPage}`);
   };
 
   const deleteBooking = async (id) => {
@@ -334,31 +420,64 @@ const OfflineListPage = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-indigo-50 p-2 sm:p-4">
       <div className="max-w-7xl mx-auto">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 p-3 bg-white/80 backdrop-blur-sm rounded-xl shadow-sm border">
-          <button 
-            onClick={goBack}
-            className="flex items-center gap-2 p-2 hover:bg-gray-100 rounded-lg transition-all text-sm font-medium text-gray-700 self-start"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </button>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 text-center flex-1">Offline Bookings</h1>
-          <div className="flex gap-2 flex-1 sm:flex-none justify-end">
+        <div className="flex flex-col gap-3 mb-4 p-3 bg-white/80 backdrop-blur-sm rounded-xl shadow-sm border">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <button 
-              onClick={() => setShowFilterPopup(true)} 
-              className="flex items-center gap-1.5 bg-black text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-800 transition whitespace-nowrap"
+              onClick={goBack}
+              className="flex items-center gap-2 p-2 hover:bg-gray-100 rounded-lg transition-all text-sm font-medium text-gray-700 self-start"
             >
-              <Filter className="w-3 h-3" />
-              Filters
+              <ArrowLeft className="w-4 h-4" />
+              Back
             </button>
-            <button 
-              onClick={handleExport} 
-              className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-green-700 transition whitespace-nowrap disabled:opacity-50"
-              disabled={loading || bookings.length === 0}
-            >
-              <Download className="w-3 h-3" />
-              Export CSV
-            </button>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 text-center flex-1">Offline Bookings</h1>
+            <div className="flex gap-2 flex-1 sm:flex-none justify-end">
+              <button 
+                onClick={() => setShowFilterPopup(true)} 
+                className="flex items-center gap-1.5 bg-black text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-800 transition whitespace-nowrap"
+              >
+                <Filter className="w-3 h-3" />
+                Filters
+              </button>
+              <button 
+                onClick={handleExport} 
+                className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-green-700 transition whitespace-nowrap disabled:opacity-50"
+                disabled={loading || bookings.length === 0}
+              >
+                <Download className="w-3 h-3" />
+                Export CSV
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search by member name or phone"
+                value={memberSearch}
+                onChange={(e) => setMemberSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') applyMemberSearch();
+                }}
+                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-black"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              {memberSearch && (
+                <button
+                  onClick={clearMemberSearch}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-xs font-semibold text-gray-600 hover:bg-gray-100 transition"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                onClick={applyMemberSearch}
+                className="px-4 py-2 bg-black text-white rounded-lg text-xs font-semibold hover:bg-gray-800 transition whitespace-nowrap"
+              >
+                Search
+              </button>
+            </div>
           </div>
         </div>
 
@@ -394,7 +513,12 @@ const OfflineListPage = () => {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold mb-1 text-gray-600">Member ID</label>
-                  <input placeholder="Member ID" value={filter.memberId} onChange={e => setFilter({ ...filter, memberId: e.target.value })}
+                  <input
+                    placeholder="Member ID"
+                    value={filter.memberIdInput}
+                    onChange={e =>
+                      setFilter({ ...filter, memberIdInput: e.target.value, memberId: e.target.value })
+                    }
                     className="w-full p-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-black text-xs" />
                 </div>
                 <div>
@@ -432,7 +556,7 @@ const OfflineListPage = () => {
             <div className="space-y-3">
               {loading ? (
                 <div className="text-center py-12 text-gray-500">Loading...</div>
-              ) : bookings.length === 0 ? (
+              ) : filteredBookings.length === 0 ? (
                 <div className="text-center py-12 text-gray-500">
                   <div className="w-16 h-16 bg-gray-200 rounded-2xl mx-auto mb-4 flex items-center justify-center">
                     <Filter className="w-8 h-8 text-gray-400" />
@@ -440,7 +564,7 @@ const OfflineListPage = () => {
                   <p className="text-lg font-semibold">No bookings found</p>
                 </div>
               ) : (
-                bookings.map((booking, index) => (
+                filteredBookings.map((booking, index) => (
                   <BookingCard
                     key={booking._id}
                     booking={booking}
@@ -473,12 +597,12 @@ const OfflineListPage = () => {
                     <tr>
                       <td colSpan="9" className="text-center p-8 text-gray-500">Loading...</td>
                     </tr>
-                  ) : bookings.length === 0 ? (
+                  ) : filteredBookings.length === 0 ? (
                     <tr>
                       <td colSpan="9" className="text-center p-8 text-gray-500">No bookings found</td>
                     </tr>
                   ) : (
-                    bookings.map((b, index) => (
+                    filteredBookings.map((b, index) => (
                       <tr key={b._id} className="border-b border-gray-100 hover:bg-gray-50 transition">
                         <td className="border border-gray-300 p-2 text-center font-mono text-xs">
                           {getBaseIndex() + index + 1}
@@ -530,18 +654,18 @@ const OfflineListPage = () => {
           <div className="mt-6 pt-4 border-t border-gray-200">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
               <div className="text-gray-600">
-                Showing <span className="font-semibold">{bookings.length}</span> of{' '}
+                Showing <span className="font-semibold">{filteredBookings.length}</span> of{' '}
                 <span className="font-semibold">{pagination.totalBookings.toLocaleString()}</span> total bookings
-                {filter.startDate || filter.endDate || filter.eventId || filter.paymentStatus ? 
+                {filter.startDate || filter.endDate || filter.eventId || filter.paymentStatus || memberSearch ? 
                   ' (filtered)' : ''
                 }
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  disabled={pagination.currentPage <= 1 || loading}
+                  disabled={pagination.currentPage <= 1 || loading || !!memberSearch.trim()}
                   onClick={() => fetchBookings(pagination.currentPage - 1)}
                   className={`px-4 py-2 rounded-lg border font-semibold transition-all ${
-                    pagination.currentPage <= 1 || loading
+                    pagination.currentPage <= 1 || loading || memberSearch.trim()
                       ? 'text-gray-400 border-gray-200 cursor-not-allowed'
                       : 'text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400'
                   }`}
@@ -552,10 +676,10 @@ const OfflineListPage = () => {
                   {pagination.currentPage} / {pagination.totalPages}
                 </span>
                 <button
-                  disabled={pagination.currentPage >= pagination.totalPages || loading}
+                  disabled={pagination.currentPage >= pagination.totalPages || loading || !!memberSearch.trim()}
                   onClick={() => fetchBookings(pagination.currentPage + 1)}
                   className={`px-4 py-2 rounded-lg border font-semibold transition-all ${
-                    pagination.currentPage >= pagination.totalPages || loading
+                    pagination.currentPage >= pagination.totalPages || loading || memberSearch.trim()
                       ? 'text-gray-400 border-gray-200 cursor-not-allowed'
                       : 'text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400'
                   }`}
